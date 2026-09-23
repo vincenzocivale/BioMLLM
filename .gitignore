@@ -1,0 +1,21 @@
+__pycache__/
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# Hydra / experiment outputs
+outputs/
+multirun/
+wandb/
+checkpoints/
+cache/
+
+results/*
+!results/.gitkeep
+!results/summary*.json
+
+/data/
+*.pt
+*.safetensors

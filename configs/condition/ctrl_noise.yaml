@@ -1,0 +1,5 @@
+# @package _global_
+# Control: noise through the same projector
+defaults:
+  - override /conditioner: noise
+  - override /expert: none

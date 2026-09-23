@@ -1,0 +1,6 @@
+# Specialist (histopathology). Gated on the HF Hub: requires accepting the license.
+kind: timm
+model_id: hf-hub:MahmoodLab/uni
+model_kwargs:
+  init_values: 1.0e-5
+  dynamic_img_size: true

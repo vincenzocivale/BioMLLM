@@ -1,0 +1,4 @@
+name: synthetic_multilabel
+classes: [ellipse, left_half]
+train: {kind: synthetic, n: 64, image_size: 64, seed: 0}
+val:   {kind: synthetic, n: 32, image_size: 64, seed: 1}

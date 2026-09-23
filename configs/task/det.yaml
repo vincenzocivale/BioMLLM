@@ -1,0 +1,4 @@
+name: det
+losses: {cls: 2.0, l1: 5.0, giou: 2.0}
+matcher: hungarian
+metrics: [map, map50]

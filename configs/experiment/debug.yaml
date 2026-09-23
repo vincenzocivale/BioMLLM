@@ -1,0 +1,6 @@
+# @package _global_
+# CPU smoke run with the toy MLLM and toy expert.
+defaults:
+  - override /mllm: toy
+  - override /expert: toy
+  - override /train: debug

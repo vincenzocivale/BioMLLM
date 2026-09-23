@@ -1,0 +1,5 @@
+# VPT-style: projected expert features as extra tokens in front of the task tokens.
+# Needs a pointwise projector (linear / mlp). Does not start exactly as the baseline.
+point: pre_llm
+mode: prepend
+prepend_grid: [8, 8]

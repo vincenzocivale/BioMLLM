@@ -1,0 +1,7 @@
+# The base MLLM's own vision encoder (Qwen3-VL-4B): tokens after the merger = what the LLM sees.
+# Used as the "self" condition (C1) in the probes. 512 px -> 16x16 merged grid.
+kind: qwen_vl_vision
+model_id: Qwen/Qwen3-VL-4B-Instruct
+image_size: 512
+layer: merged
+dtype: float32   # exact match with the official model; bf16 differs by ~5% (cast path)

@@ -1,0 +1,14 @@
+# Experiment 0: linear segmentation probes on frozen encoders.
+#   python scripts/probe_experts.py probe_data=montgomery_lungs experts=[dinov2,siglip,rad_dino,biomedclip]
+defaults:
+  - probe_data: synthetic
+  - _self_
+
+experts: [toy]          # names of configs/expert/*.yaml
+device: auto
+seed: 0
+epochs: 20
+lr: 1.0e-3
+batch_size: 16
+num_workers: 4
+output_dir: ${hydra:runtime.output_dir}

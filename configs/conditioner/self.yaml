@@ -1,0 +1,4 @@
+# C1: task tokens conditioned on the MLLM's own features (extra capacity, no new information)
+name: self
+source: self
+native_drop: 0.0   # prob. of dropping F^MLLM from task tokens in training (ClinFusion-style)

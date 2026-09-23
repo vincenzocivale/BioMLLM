@@ -1,0 +1,5 @@
+# @package _global_
+# C3: specialist (method)
+defaults:
+  - override /conditioner: specialist
+  - override /expert: biomedclip

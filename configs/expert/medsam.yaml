@@ -1,0 +1,4 @@
+# Specialist (medical segmentation), SAM-derived: beware decoder-affinity confound
+# when the MLLM mask decoder is SAM.
+kind: sam_encoder
+model_id: flaviagiammarino/medsam-vit-base

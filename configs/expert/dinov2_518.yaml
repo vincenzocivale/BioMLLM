@@ -1,0 +1,7 @@
+# Generalist at RAD-DINO's resolution (518 px -> 37x37 grid): same architecture AND same grid,
+# so the RAD-DINO vs DINOv2 comparison isolates pretraining data from resolution.
+kind: hf_vit
+model_id: facebook/dinov2-base
+pretrained: true
+layer: -1
+image_size: 518

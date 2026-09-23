@@ -1,0 +1,6 @@
+# Same encoder at 1024 px -> 32x32 merged grid, closer to RAD-DINO's 37x37 grid.
+kind: qwen_vl_vision
+model_id: Qwen/Qwen3-VL-4B-Instruct
+image_size: 1024
+layer: merged
+dtype: float32   # exact match with the official model; bf16 differs by ~5% (cast path)

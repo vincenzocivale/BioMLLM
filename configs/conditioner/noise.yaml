@@ -1,0 +1,5 @@
+# Control: same projector fed with Gaussian noise
+name: noise
+source: noise
+noise_dim: 768
+native_drop: 0.0   # prob. of dropping F^MLLM from task tokens in training (ClinFusion-style)

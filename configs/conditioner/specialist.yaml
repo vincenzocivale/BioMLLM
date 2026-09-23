@@ -1,0 +1,4 @@
+# C3 (method): biomedical specialist encoder. Pick it with expert=rad_dino | biomedclip | uni | medsam
+name: specialist
+source: expert
+native_drop: 0.0   # prob. of dropping F^MLLM from task tokens in training (ClinFusion-style)

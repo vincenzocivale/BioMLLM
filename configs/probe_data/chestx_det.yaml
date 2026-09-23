@@ -1,0 +1,8 @@
+# ChestX-Det: 13 overlapping lesion classes on NIH ChestX-ray14 images (official train / test split).
+# Prepare with scripts/prepare_data/chestx_det.py. Images go to the experts at 512 px; masks are
+# evaluated at 256 px to keep 13-class masks in memory.
+name: chestx_det
+classes: [Atelectasis, Calcification, Cardiomegaly, Consolidation, Diffuse Nodule, Effusion,
+          Emphysema, Fibrosis, Fracture, Mass, Nodule, Pleural Thickening, Pneumothorax]
+train: {kind: multilabel_folder, root: "${oc.env:BIOMLLM_DATA,data}/chestx_det", split_file: train.txt, image_size: 512, mask_size: 256}
+val:   {kind: multilabel_folder, root: "${oc.env:BIOMLLM_DATA,data}/chestx_det", split_file: val.txt, image_size: 512, mask_size: 256}

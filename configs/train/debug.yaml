@@ -1,0 +1,5 @@
+policy: frozen     # frozen | lora | full  (see training/param_groups.py)
+batch_size: 2
+lr: 1.0e-4
+max_steps: 10
+precision: fp32

@@ -1,0 +1,5 @@
+# @package _global_
+# Control: specialist architecture, random weights
+defaults:
+  - override /conditioner: specialist
+  - override /expert: rad_dino_random

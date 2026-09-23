@@ -1,0 +1,5 @@
+# Specialist (chest X-ray), DINOv2 architecture. Not SAM-derived.
+kind: hf_vit
+model_id: microsoft/rad-dino
+pretrained: true
+layer: -1

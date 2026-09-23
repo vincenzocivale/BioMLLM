@@ -1,0 +1,5 @@
+# @package _global_
+# C2: generalist VL encoder
+defaults:
+  - override /conditioner: generalist
+  - override /expert: siglip

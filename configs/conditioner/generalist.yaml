@@ -1,0 +1,4 @@
+# C2: external generalist encoder. Pick it with expert=dinov2 | siglip | clip ...
+name: generalist
+source: expert
+native_drop: 0.0   # prob. of dropping F^MLLM from task tokens in training (ClinFusion-style)

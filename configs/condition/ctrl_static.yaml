@@ -1,0 +1,5 @@
+# @package _global_
+# Control: learned image-independent map through the same projector
+defaults:
+  - override /conditioner: static
+  - override /expert: none

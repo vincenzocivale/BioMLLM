@@ -1,0 +1,5 @@
+# @package _global_
+# C1: MLLM's own features
+defaults:
+  - override /conditioner: self
+  - override /expert: none

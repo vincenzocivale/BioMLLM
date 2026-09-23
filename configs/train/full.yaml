@@ -1,0 +1,6 @@
+# Costly reference: full fine-tuning (native vision encoder still frozen).
+policy: full
+batch_size: 8
+lr: 2.0e-5
+max_steps: 5000
+precision: bf16

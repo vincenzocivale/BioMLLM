@@ -1,0 +1,5 @@
+# Generalist, same architecture family as RAD-DINO (the cleanest C2 vs C3 pair)
+kind: hf_vit
+model_id: facebook/dinov2-base
+pretrained: true
+layer: -1

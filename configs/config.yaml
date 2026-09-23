@@ -1,0 +1,19 @@
+# Composition root. Every comparison / ablation in the paper is a group override, e.g.
+#   python scripts/train.py condition=c3_rad_dino injection=post_llm
+#   python scripts/train.py +experiment=debug conditioner=self
+defaults:
+  - mllm: toy
+  - conditioner: specialist
+  - expert: rad_dino
+  - projector: mlp
+  - injection: pre_llm
+  - gate: scalar
+  - task: seg
+  - data: none
+  - train: debug
+  - optional condition: null   # bundles conditioner+expert, e.g. condition=c3_rad_dino
+  - _self_
+
+seed: 0
+device: auto
+output_dir: ${hydra:runtime.output_dir}

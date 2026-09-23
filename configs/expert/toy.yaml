@@ -1,0 +1,4 @@
+kind: toy
+dim: 32
+image_size: 64
+patch_size: 8

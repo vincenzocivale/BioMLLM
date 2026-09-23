@@ -1,0 +1,3 @@
+# Fixed alpha; the projector output layer is zero-initialised instead
+name: fixed
+value: 1.0

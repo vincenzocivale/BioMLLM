@@ -1,0 +1,5 @@
+# @package _global_
+# C2: generalist, same family as RAD-DINO
+defaults:
+  - override /conditioner: generalist
+  - override /expert: dinov2

@@ -1,0 +1,5 @@
+# ClinFusion-style local cross-attention: T_i attends to the k x k window of F^S around i.
+name: local_cross_attn
+hidden_dim: null
+num_heads: 8
+kernel_size: 3

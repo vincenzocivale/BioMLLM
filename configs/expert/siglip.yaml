@@ -1,0 +1,3 @@
+# Generalist vision-language encoder
+kind: siglip
+model_id: google/siglip-base-patch16-224

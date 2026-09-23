@@ -1,0 +1,6 @@
+# Montgomery County CXR set (open), left+right lung masks merged to one foreground class.
+# Expected layout after scripts/prepare_data: $BIOMLLM_DATA/montgomery/{images,masks}/ + splits.
+name: montgomery_lungs
+num_classes: 2
+train: {kind: folder, root: "${oc.env:BIOMLLM_DATA,data}/montgomery", split_file: train.txt, image_size: 512}
+val:   {kind: folder, root: "${oc.env:BIOMLLM_DATA,data}/montgomery", split_file: val.txt, image_size: 512}

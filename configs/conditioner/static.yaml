@@ -1,0 +1,6 @@
+# Control: same projector fed with a learned, image-independent map (VPT/CoOp-style capacity)
+name: static
+source: static
+static_dim: 768
+static_grid: [16, 16]
+native_drop: 0.0   # prob. of dropping F^MLLM from task tokens in training (ClinFusion-style)

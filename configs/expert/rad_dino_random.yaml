@@ -1,0 +1,5 @@
+# Control: RAD-DINO architecture, random weights
+kind: hf_vit
+model_id: microsoft/rad-dino
+pretrained: false
+layer: -1

@@ -1,0 +1,6 @@
+# Phase 1 (default setting of the paper): MLLM fully frozen; only task params + conditioner train.
+policy: frozen
+batch_size: 8
+lr: 1.0e-4
+max_steps: 5000
+precision: bf16

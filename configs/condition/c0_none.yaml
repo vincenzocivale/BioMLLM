@@ -1,0 +1,5 @@
+# @package _global_
+# C0: standard task tokens
+defaults:
+  - override /conditioner: none
+  - override /expert: none

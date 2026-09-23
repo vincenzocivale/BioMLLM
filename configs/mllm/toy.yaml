@@ -1,0 +1,8 @@
+# Tiny adapter for tests and debugging. Real backbones get one file each (lisa.yaml, ...).
+name: toy
+dim: 64
+image_size: 64
+patch_size: 8
+depth: 2
+num_heads: 4
+spatial_queries: true

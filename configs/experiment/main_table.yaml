@@ -1,0 +1,6 @@
+# @package _global_
+# Main comparison C0-C3 + controls. Run with: python scripts/train.py -m +experiment=main_table
+hydra:
+  sweeper:
+    params:
+      condition: c0_none,ctrl_static,c1_self,ctrl_noise,c2_dinov2,c2_siglip,c3_rad_dino,c3_biomedclip,ctrl_rad_dino_random
