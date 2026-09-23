@@ -74,6 +74,7 @@ def main(cfg: DictConfig) -> None:
     val_set = build_split(cfg.probe_data.val, nc, classes)
     log.info("dataset %s: %d train / %d val", cfg.probe_data.name, len(train_set), len(val_set))
 
+    out = Path(cfg.output_dir)
     rows = []
     for name in cfg.experts:
         expert = build_expert_from_cfg(load_expert_cfg(name))
@@ -96,9 +97,9 @@ def main(cfg: DictConfig) -> None:
         log.info("%s: val %s", name, {k: round(v, 4) for k, v in row["val"].items()
                                       if isinstance(v, float) and "/" not in k})
         rows.append(row)
+        # saved after every expert, so a crash on a later one does not lose finished rows
+        (out / "results.json").write_text(json.dumps({"dataset": cfg.probe_data.name, "rows": rows}, indent=2))
 
-    out = Path(cfg.output_dir)
-    (out / "results.json").write_text(json.dumps({"dataset": cfg.probe_data.name, "rows": rows}, indent=2))
     metrics = [m for m in ("dice", "giou", "ciou", "acc_box50") if m in rows[0]["val"]]
     table = to_markdown(rows, metrics)
     if classes:
