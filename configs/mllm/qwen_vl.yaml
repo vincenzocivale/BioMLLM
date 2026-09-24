@@ -1,0 +1,6 @@
+# Frozen Qwen3-VL-4B, one [MASK] task token per patch (STAMP-style dense segmentation).
+name: qwen_vl
+model_id: Qwen/Qwen3-VL-4B-Instruct
+image_size: 512
+dtype: bfloat16
+prompt: "Segment the relevant structures."

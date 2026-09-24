@@ -69,17 +69,19 @@ src/biomllm/
   models/
     types.py             FeatureMap, TaskQueries (native term, prepended prefix), MLLMOutput
     mllm/base.py         TaskTokenMLLM: backbone-agnostic interface (hooks + task_parameters)
-    mllm/adapters/       toy.py (reference + tests); qwen_vl.py (todo)
+    mllm/adapters/       toy.py (reference + tests); qwen_vl.py (Qwen3-VL, frozen, seg + vqa)
     experts/             FrozenExpert + registry (hf_vit, siglip, timm, open_clip, sam_encoder)
     conditioning/        projectors, gates, alignment, conditioner, native-term drop
     conditioned_mllm.py  sources (none/static/self/expert/noise), injection points, shuffle
     packages.py          plug-in modality packages (activate / deactivate / save / load)
     build.py             config -> model (+ freeze policy)
   probing/               linear segmentation probes (experiment 0)
-  data/datasets/         segmentation folders, synthetic shapes; VQA/report loaders (todo)
+  data/datasets/         segmentation folders, synthetic shapes, vqa.py (VQA-RAD); report loaders (todo)
   training/              freeze policies, cost tracking; trainer, distillation (todo)
   evaluation/            Dice, gIoU, cIoU, Acc@0.5 from masks; VQA/report metrics (todo)
 scripts/                 train.py, probe_experts.py, prepare_data/
+                         train_seg_c0_vs_c3.py, train_vqa_c0_vs_c3.py, probe_mlp_control.py
+                         (ad hoc first-evidence scripts for H1/H2, not the general trainer)
 tests/
 ```
 
@@ -120,13 +122,27 @@ python scripts/probe_experts.py                                    # experiment 
 python scripts/prepare_data/montgomery.py --src <MontgomerySet> --dst $BIOMLLM_DATA/montgomery
 python scripts/probe_experts.py probe_data=montgomery_lungs experts=[dinov2,siglip,rad_dino,biomedclip]
 python scripts/train.py +experiment=debug                          # toy model smoke run
+
+# First H1/H2 evidence (real Qwen3-VL-4B, needs a GPU and the HF cache on DUNE)
+python scripts/train_seg_c0_vs_c3.py mllm=qwen_vl condition=c0_none     train=seg_smoke +run_name=c0
+python scripts/train_seg_c0_vs_c3.py mllm=qwen_vl condition=c3_rad_dino train=seg_smoke +run_name=c3
+python scripts/probe_mlp_control.py                                   # capacity-matched control, no LLM
+python scripts/train_vqa_c0_vs_c3.py mllm=qwen_vl task=vqa condition=c0_none     train=seg_smoke +run_name=vqa_c0
+python scripts/train_vqa_c0_vs_c3.py mllm=qwen_vl task=vqa condition=c3_rad_dino train=seg_smoke +run_name=vqa_c3
 ```
 
 ## Status
 
 - [x] Conditioner (projectors incl. local cross-attention, gates, prepend, native drop), controls (static, shuffle, noise), freeze policies, cost tracking, modality packages. Tested on the toy backbone.
-- [x] Experiment 0 tooling: linear probe, segmentation metrics, Montgomery preparation. Synthetic run only so far.
-- [ ] Run experiment 0 on real CXR / pathology data with real experts (needs model and dataset downloads)
-- [ ] Qwen-VL adapter (`[MASK]` / `[PERC]` tokens on a frozen LLM) + feasibility test without expert
-- [ ] Trainer, VQA / report loaders and metrics
+- [x] Experiment 0 tooling: linear probe, segmentation metrics, Montgomery preparation.
+- [x] Experiment 0 on real CXR data (ChestX-Det, real experts): `python scripts/probe_experts.py probe_data=chestx_det experts=[dinov2,siglip,biomedclip,rad_dino,qwen3vl_4b,rad_dino_random]`. RAD-DINO Dice 0.445 (linear probe); `rad_dino_random` (same architecture, random weights) Dice 0.059 -- confirms the gain is from medical pretraining, not architecture.
+- [x] Qwen-VL adapter (`src/biomllm/models/mllm/adapters/qwen_vl.py`): Qwen3-VL-4B frozen, two-pass forward reusing `Qwen3VLModel`'s own KV-cache continuation (no hand-rolled M-RoPE). `task="seg"`: one `[MASK]` token per patch (STAMP-style dense head). `task="vqa"`: `[PERC]` tokens on a coarser grid (avg-pooled F^MLLM) as context before the question/answer text, teacher-forced LM loss.
+- [x] Projector output is LayerNorm'd (no affine) before the gate scales it (`conditioning/projector.py`), so `alpha` is comparable across experts/projectors -- an unnormalised MLP projector can dwarf the native task-token term even at a small `alpha`, making the gate unreadable.
+- [x] First H1/H2 evidence (`scripts/train_seg_c0_vs_c3.py`, `scripts/train_vqa_c0_vs_c3.py`, `scripts/probe_mlp_control.py`; ad hoc single-task loops, batch size 1-4, not the general trainer):
+  - **Segmentation** (ChestX-Det, binary "any lesion", Dice at 256px). At 400 steps, ordering across conditions was as expected: C0 0.267 < C1 (self) 0.387 < C2 (dinov2) 0.330 / (siglip) 0.297 < C3 (biomedclip) 0.417 < **C3 (rad_dino) 0.516**. At 1500 steps, C0 0.289, **C3 (rad_dino) 0.552** (0.548 before the projector norm fix, 0.552 after -- alpha dropped from 0.039 to 0.090 and `correction_over_native` from 0.77 to 0.16, i.e. the fix changed what alpha means, not the outcome). But a capacity-matched MLP probe directly on RAD-DINO features, no LLM, already gets **0.550** (1500 steps) -- on segmentation alone, routing through the frozen 4B LLM adds nothing measurable over a capacity-matched probe on the expert features.
+  - **VQA** (VQA-RAD yes/no, 800 steps, 3 seeds): majority baseline 0.530, **C0 (no expert) 0.705 ± 0.004**, **C3 (rad_dino) 0.705 ± 0.006** (variance only stabilised after lowering the conditioner's LR 10x; at the base LR it was 0.702 ± 0.022). The MLLM route clears the baseline by a wide, stable margin on a task a standalone encoder+probe cannot attempt at all -- but the expert adds nothing measurable over C0 here either.
+  - Net: the frozen-MLLM route's value so far is doing VQA at all (H2), not the expert improving it (H1 is not yet supported by either task at current training budgets).
+- [ ] Run experiment 0 on pathology data (needs a second, non-CXR dataset + domain-matched expert)
+- [ ] Trainer (currently ad hoc scripts per comparison), report generation, VQA metrics beyond closed-set yes/no
+- [ ] Understand the C3 gap on segmentation and the C0=C3 tie on VQA before scaling up: more steps/seeds, `injection=post_llm`, higher `image_size` (finer PERC/MASK grid), open-ended VQA
 - [ ] Phase 1 main table on CXR → pathology package → phase 2 (LoRA, full FT, FADA / ClinFusion baselines)

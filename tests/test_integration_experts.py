@@ -61,3 +61,50 @@ def test_qwen_vision_token_order_is_row_major():
         rr, cc = divmod(int(d.argmax()), 16)
         hits += abs(rr - r) <= 1 and abs(cc - c) <= 1
     assert hits == 4
+
+
+def test_qwen_vl_adapter_seg_forward_and_backward():
+    from biomllm.models.conditioned_mllm import ConditionedMLLM
+    from biomllm.models.mllm.adapters.qwen_vl import QwenVLAdapter
+
+    mllm = QwenVLAdapter(model_id=QWEN, image_size=512, dtype="bfloat16")
+    mllm.freeze_native()
+    model = ConditionedMLLM(mllm, source="none")
+
+    x = torch.rand(2, 3, 512, 512)
+    out = model(x, "seg")
+    assert out["mask_logits"].shape == (2, 1, 16, 16)
+    assert torch.isfinite(out["mask_logits"]).all()
+
+    loss = out["mask_logits"].sum()
+    loss.backward()
+    for name, p in mllm.task_parameters().items():
+        assert p.grad is not None and torch.isfinite(p.grad).all(), name
+    for p in mllm.qwen.parameters():
+        assert p.grad is None
+
+
+def test_qwen_vl_adapter_task_tokens_see_the_right_image():
+    """Perturbing one image in a batch must not change another image's mask logits
+    (no leakage across the batch dim in the two-pass cache forward)."""
+    from biomllm.models.mllm.adapters.qwen_vl import QwenVLAdapter
+
+    torch.manual_seed(0)
+    mllm = QwenVLAdapter(model_id=QWEN, image_size=512, dtype="float32")
+    mllm.freeze_native().eval()
+
+    x = torch.rand(2, 3, 512, 512)
+
+    def run(images):
+        with torch.no_grad():
+            visual = mllm.visual_features(images)
+            queries = mllm.build_task_queries("seg", visual, {})
+            hidden = mllm.llm_forward("seg", visual, queries, {}).task_hidden
+            return mllm.decode("seg", hidden, visual, {})["mask_logits"]
+
+    base = run(x)
+    x2 = x.clone()
+    x2[1] = torch.rand(3, 512, 512)
+    perturbed = run(x2)
+    assert torch.allclose(base[0], perturbed[0], atol=1e-4)
+    assert not torch.allclose(base[1], perturbed[1], atol=1e-4)

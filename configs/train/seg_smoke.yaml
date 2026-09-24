@@ -1,0 +1,7 @@
+# First C0 vs C3 segmentation smoke run (scripts/train_seg_c0_vs_c3.py): small enough for a
+# single A100, just to get a first H1 data point, not a tuned recipe.
+policy: frozen
+batch_size: 4
+lr: 3.0e-4
+max_steps: 150
+precision: bf16

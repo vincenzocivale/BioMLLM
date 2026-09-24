@@ -11,13 +11,23 @@ from biomllm.models.types import FeatureMap, TaskQueries
 
 
 class Projector(nn.Module):
-    """Returns the correction P(F^S) with the same shape as the task tokens."""
+    """Returns the correction P(F^S) with the same shape as the task tokens.
+
+    Per-token output is LayerNorm'd (no affine params) before the gate scales it, so alpha
+    is comparable across projectors / expert dims: without this, an unconstrained MLP can
+    output a vector with a much larger norm than the task tokens' native term, and a small
+    alpha then still yields a correction as large as (or larger than) the native signal --
+    making alpha unreadable as "how much weight the expert gets". A zero-initialised
+    projector output stays exactly zero through the norm (0 / sqrt(eps) = 0), so
+    `zero_init_output` (used with a fixed, non-zero gate) is unaffected.
+    """
 
     def __init__(self, in_dim: int, out_dim: int, zero_init_output: bool = False):
         super().__init__()
         self.in_dim = in_dim
         self.out_dim = out_dim
         self.zero_init_output = zero_init_output
+        self.out_norm = nn.LayerNorm(out_dim, elementwise_affine=False)
 
     def output_layer(self) -> nn.Linear:
         raise NotImplementedError
@@ -51,7 +61,7 @@ class PointwiseProjector(Projector):
             x = resample_to_grid(feats, queries.grid, self.resample_mode).tokens
         else:
             x = global_pool(feats)
-        delta = self._map(x)
+        delta = self.out_norm(self._map(x))
         return delta.expand_as(queries.tokens)
 
 
@@ -110,7 +120,7 @@ class CrossAttnProjector(Projector):
         q = self.q_proj(self.q_norm(queries.tokens))
         kv = self.kv_proj(self.kv_norm(feats.tokens))
         attended, _ = self.attn(q, kv, kv, need_weights=False)
-        return self.out(attended)
+        return self.out_norm(self.out(attended))
 
 
 class LocalCrossAttnProjector(Projector):
@@ -154,7 +164,7 @@ class LocalCrossAttnProjector(Projector):
         pad_mask = valid.permute(0, 2, 1).reshape(b * n, k * k) == 0          # True = ignore
         q = self.q_proj(self.q_norm(queries.tokens)).reshape(b * n, 1, hd)
         attended, _ = self.attn(q, windows, windows, key_padding_mask=pad_mask, need_weights=False)
-        return self.out(attended.view(b, n, hd))
+        return self.out_norm(self.out(attended.view(b, n, hd)))
 
 
 PROJECTORS: dict[str, type[Projector]] = {
