@@ -39,6 +39,10 @@ job() {
     fi
 }
 
+# Reference for the LLM probes: the native V (C0; C3 on task tokens has the same image context).
+run scripts/probe_llm_hidden.py mllm=qwen_vl train=seg_smoke condition=c0_none \
+    +run_name=probe_c0 hydra.run.dir="$OUT/probe_c0"
+
 job vqa vqa_c3_native         condition=c3_rad_dino injection=native
 job seg seg_c3_native         condition=c3_rad_dino injection=native
 job vqa vqa_c3_native_prepend condition=c3_rad_dino injection=native_prepend
