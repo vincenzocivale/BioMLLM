@@ -33,6 +33,8 @@ from torch.utils.data import DataLoader
 from biomllm.data.datasets.segmentation import MultiLabelSegmentationFolder
 from biomllm.evaluation.metrics import BinarySegMetrics
 from biomllm.models.build import build_model
+from biomllm.models.conditioning.conditioner import InjectionMode, InjectionPoint
+from biomllm.models.types import TaskQueries
 from biomllm.training.param_groups import param_summary, trainable_parameters
 
 log = logging.getLogger(__name__)
@@ -150,32 +152,40 @@ def main(cfg: DictConfig) -> None:
 
 @torch.no_grad()
 def diagnose_conditioner(model, val_loader, device) -> dict | None:
-    """||alpha * P(F^S)|| vs ||F^MLLM|| in the task tokens: if the correction dwarfs the
-    native term, the model has learned to ignore the frozen MLLM's own visual signal and
+    """||alpha * P(F^S)|| vs ||F^MLLM|| where the correction is applied: in the task tokens
+    (pre_llm / post_llm), or in the native visual tokens (native). If the correction dwarfs
+    the native term, the model has learned to ignore the frozen MLLM's own visual signal and
     is effectively just routing the specialist features through the LLM as a pass-through,
-    rather than genuinely correcting/conditioning them."""
+    rather than genuinely correcting/conditioning them. For prepend variants the correction
+    is a set of extra tokens, compared with the native tokens they sit next to."""
     if model.conditioner is None:
         return None
+    was_training = model.training
     model.eval()
+    cond = model.conditioner
     batch = next(iter(val_loader))
     images = batch["image"].to(device)
     visual = model.mllm.visual_features(images)
     queries = model.mllm.build_task_queries("seg", visual, {})
     feats = model.conditioning_features(images, visual, {})
-    correction = model.conditioner.correction(queries, feats)
-    alpha = model.conditioner.gate(queries.tokens)
-    native_norm = queries.native.norm(dim=-1).mean().item()
-    task_embed_norm = (queries.tokens - queries.native).norm(dim=-1).mean().item()
+    target = TaskQueries(visual.tokens, grid=visual.grid) if cond.injection_point is InjectionPoint.NATIVE else queries
+    if cond.mode is InjectionMode.PREPEND:
+        correction = cond._extra_tokens(target.tokens, target.grid, feats)
+    else:
+        correction = cond.correction(target, feats)
+    alpha = cond.gate(target.tokens)
+    native_norm = visual.tokens.float().norm(dim=-1).mean().item()
+    task_embed_norm = (queries.tokens - queries.native).float().norm(dim=-1).mean().item()
     corr_norm = correction.float().norm(dim=-1).mean().item()
     alpha_val = alpha.reshape(-1).float().mean().item() if torch.is_tensor(alpha) else float(alpha)
+    model.train(was_training)
     return {
         "alpha": alpha_val,
-        "native_norm": native_norm,       # ||F^MLLM|| per task token
+        "native_norm": native_norm,       # ||F^MLLM|| per visual token
         "e_task_norm": task_embed_norm,   # ||e_task|| (should match native_norm's scale)
-        "correction_norm": corr_norm,     # ||alpha * P(F^S)||
+        "correction_norm": corr_norm,     # ||alpha * P(F^S)|| per corrected / extra token
         "correction_over_native": corr_norm / max(native_norm, 1e-8),
     }
-
 
 if __name__ == "__main__":
     main()
