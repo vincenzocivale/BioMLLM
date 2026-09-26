@@ -1,0 +1,4 @@
+# Correct the MLLM's own visual tokens, V' = V + alpha * P(F^S), before the LLM: the frozen LLM
+# reads the expert signal in its whole image context, and the task tokens built from V inherit it.
+point: native
+mode: add

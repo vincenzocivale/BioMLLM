@@ -43,7 +43,7 @@ At test time, `model.shuffle_features = True` pairs each image with another imag
 
 | axis | override |
 |---|---|
-| injection | `injection=pre_llm` (sum into task tokens) / `post_llm` (before the head, LISA-like) / `prepend` (extra tokens, VPT-like) |
+| injection | `injection=pre_llm` (sum into task tokens) / `post_llm` (before the head, LISA-like) / `prepend` (extra tokens, VPT-like) / `native` (sum into the MLLM's own visual tokens, V' = V + α·P(F^S), so the frozen LLM reads the expert signal in its whole image context) / `native_prepend` (expert tokens next to the native ones, the interleaved alternative of "Eyes Wide Shut") |
 | projector | `projector=linear` / `mlp` / `cross_attn` / `local_cross_attn` (k×k window, ClinFusion-style) |
 | gate | `gate=scalar` / `token` / `fixed`; `conditioner.native_drop=p` (stochastic drop of F^MLLM in training) |
 | training budget | `train=frozen` (default) / `lora` (phase 2) / `full` (reference) |
@@ -142,6 +142,7 @@ python scripts/train_vqa_c0_vs_c3.py mllm=qwen_vl task=vqa condition=c3_rad_dino
   - **Segmentation** (ChestX-Det, binary "any lesion", Dice at 256px). At 400 steps, ordering across conditions was as expected: C0 0.267 < C1 (self) 0.387 < C2 (dinov2) 0.330 / (siglip) 0.297 < C3 (biomedclip) 0.417 < **C3 (rad_dino) 0.516**. At 1500 steps, C0 0.289, **C3 (rad_dino) 0.552** (0.548 before the projector norm fix, 0.552 after -- alpha dropped from 0.039 to 0.090 and `correction_over_native` from 0.77 to 0.16, i.e. the fix changed what alpha means, not the outcome). But a capacity-matched MLP probe directly on RAD-DINO features, no LLM, already gets **0.550** (1500 steps) -- on segmentation alone, routing through the frozen 4B LLM adds nothing measurable over a capacity-matched probe on the expert features.
   - **VQA** (VQA-RAD yes/no, 800 steps, 3 seeds): majority baseline 0.530, **C0 (no expert) 0.705 ± 0.004**, **C3 (rad_dino) 0.705 ± 0.006** (variance only stabilised after lowering the conditioner's LR 10x; at the base LR it was 0.702 ± 0.022). The MLLM route clears the baseline by a wide, stable margin on a task a standalone encoder+probe cannot attempt at all -- but the expert adds nothing measurable over C0 here either.
   - Net: the frozen-MLLM route's value so far is doing VQA at all (H2), not the expert improving it (H1 is not yet supported by either task at current training budgets).
+- [x] Native injection (`injection=native` / `native_prepend`): the expert bias enters the visual tokens the LLM reads, not only the task tokens. Starts bit-for-bit as C0 on Qwen3-VL-4B (`native`); the prefill backpropagates through the frozen LLM only when the bias is active. DeepStack features stay native. Queue: `scripts/run_native_bias.sh`.
 - [ ] Run experiment 0 on pathology data (needs a second, non-CXR dataset + domain-matched expert)
 - [ ] Trainer (currently ad hoc scripts per comparison), report generation, VQA metrics beyond closed-set yes/no
 - [ ] Understand the C3 gap on segmentation and the C0=C3 tie on VQA before scaling up: more steps/seeds, `injection=post_llm`, higher `image_size` (finer PERC/MASK grid), open-ended VQA

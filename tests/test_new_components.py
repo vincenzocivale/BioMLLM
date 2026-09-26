@@ -115,6 +115,44 @@ def test_prepend_invalid_configurations(overrides):
         build_model(_cfg(["conditioner=specialist", *overrides]))
 
 
+# ------------------------------------------------------------------------ native injection
+
+def test_native_injection_biases_the_llm_context(images):
+    """V' = V + alpha * P(F^S) reaches the LLM (and the task tokens built from V), and the
+    projector is trained through the frozen LLM."""
+    model = build_model(_cfg(["conditioner=specialist", "injection=native", "projector=mlp"]))
+    base = ConditionedMLLM(model.mllm, "none")
+    torch.testing.assert_close(model(images, "seg"), base(images, "seg"))
+    _open_gate(model)
+    seen = {}
+    hook = model.mllm.llm.register_forward_hook(lambda m, args, out: seen.setdefault("x", args[0]))
+    out = model(images, "seg")["mask_logits"]
+    hook.remove()
+    visual = model.mllm.visual_features(images).tokens
+    n_vis = visual.shape[1]
+    assert not torch.allclose(seen["x"][:, :n_vis], visual)
+    out.pow(2).mean().backward()
+    assert all(p.grad is not None for p in model.conditioner.projector.parameters() if p.requires_grad)
+    assert all(p.grad is None for p in model.mllm.vision.parameters())
+
+
+def test_native_prepend_adds_image_tokens_and_alpha_zero_is_baseline(images):
+    model = build_model(_cfg(["conditioner=specialist", "injection=native_prepend", "projector=mlp"]))
+    base = ConditionedMLLM(model.mllm, "none")
+    _open_gate(model)
+    seen = {}
+    hook = model.mllm.llm.register_forward_hook(lambda m, args, out: seen.setdefault("x", args[0]))
+    out = model(images, "seg")["mask_logits"]
+    hook.remove()
+    assert out.shape == (2, 1, 8, 8)
+    n_vis, n_extra, n_q = 64, 8 * 8, 64
+    assert seen["x"].shape[1] == n_vis + n_extra + n_q
+    # V itself is untouched: only extra tokens are added.
+    torch.testing.assert_close(seen["x"][:, :n_vis], model.mllm.visual_features(images).tokens)
+    model.conditioner.set_alpha_scale(0.0)
+    torch.testing.assert_close(model(images, "seg"), base(images, "seg"))
+
+
 # ----------------------------------------------------------------------------- native drop
 
 def test_drop_native():

@@ -6,7 +6,10 @@ paths (`Qwen3VLModel.forward`), rather than hand-rolling M-RoPE:
 
   1. prefill  -- the real image + a short fixed instruction, through the official
      `input_ids` + `pixel_values` path. This computes and caches `rope_deltas`, exactly
-     as the first step of `generate()` does.
+     as the first step of `generate()` does. The image embeddings scattered into the
+     sequence are the `visual` tokens handed to `llm_forward` (the ViT is not re-run), so
+     native injection (V' = V + alpha * P(F^S)) reaches the LLM through the same path; the
+     DeepStack features Qwen3-VL adds to the first LLM layers stay the native ones.
   2. task step -- the Q = h*w task tokens (T_i = e_task + F_i^MLLM, continuous embeddings,
      not real token ids) are appended via `inputs_embeds` with the prefill's KV cache.
      `Qwen3VLModel` falls back to its cached `rope_deltas` for `inputs_embeds`-only calls,
@@ -25,6 +28,7 @@ that works without a patch grid (projector=cross_attn).
 from __future__ import annotations
 
 import math
+from contextlib import contextmanager
 from typing import Any
 
 import torch
@@ -85,6 +89,13 @@ class QwenVLAdapter(TaskTokenMLLM):
         # text appended after the [PERC] task tokens (see `_vqa_forward`).
         img_ids = tok(image_block, return_tensors="pt")["input_ids"]
         self.register_buffer("image_prefix_ids", img_ids, persistent=False)
+        # Native prepend splits the seg / det prefill into image | extra tokens | instruction,
+        # so the instruction ids must be exactly what follows the image block.
+        for name in ("seg", "det"):
+            ids = getattr(self, f"{name}_prompt_ids")
+            if not torch.equal(ids[:, :img_ids.shape[1]], img_ids):
+                raise RuntimeError(f"{name} prompt does not start with the image block tokens")
+            self.register_buffer(f"{name}_text_ids", ids[:, img_ids.shape[1]:], persistent=False)
         self.register_buffer("image_mm_token_type_ids", (img_ids == self.image_token_id).long(),
                              persistent=False)
         self.perc_grid = tuple(perc_grid)
@@ -122,8 +133,48 @@ class QwenVLAdapter(TaskTokenMLLM):
 
         b = imgs.shape[0]
         out = self.qwen.model.get_image_features(pixel_values, image_grid_thw=grid_thw, return_dict=True)
+        self._cache["vision_output"] = out
         tokens = torch.cat(list(out.pooler_output), dim=0).to(imgs.dtype).view(b, -1, self.visual_dim)
         return FeatureMap(tokens, self.grid)
+
+    @contextmanager
+    def _image_embeds(self, visual: FeatureMap):
+        """Make the prefill scatter `visual.tokens` (possibly corrected by native injection) into
+        the image placeholders instead of re-running the ViT on `pixel_values`."""
+        model = self.qwen.model
+        cached = self._cache["vision_output"]
+        tokens = visual.tokens.to(self.qwen.dtype)
+
+        def image_features(*args, **kwargs):
+            return type(cached)(pooler_output=tuple(tokens.unbind(0)),
+                                deepstack_features=cached.deepstack_features)
+
+        model.get_image_features = image_features
+        try:
+            yield
+        finally:
+            del model.get_image_features  # back to the class method
+
+    def _prefill(self, input_ids: torch.Tensor, mm_types: torch.Tensor, visual: FeatureMap):
+        # Without native injection the prefill only depends on frozen weights, never on the
+        # trainable parameters, so it needs no autograd graph -- only its KV cache.
+        with self._image_embeds(visual), torch.set_grad_enabled(
+                torch.is_grad_enabled() and visual.tokens.requires_grad):
+            return self.qwen.model(
+                input_ids=input_ids,
+                pixel_values=self._cache["pixel_values"],
+                image_grid_thw=self._cache["image_grid_thw"],
+                mm_token_type_ids=mm_types,
+                attention_mask=torch.ones_like(input_ids),
+                use_cache=True,
+            )
+
+    def _continue(self, embeds: torch.Tensor, past, use_cache: bool = True):
+        # No attention_mask here: with an explicit mask, `compute_3d_position_ids` builds
+        # position ids over its *whole* length (mismatching the new, cache-continuation-only
+        # `inputs_embeds`). Omitting it takes the `arange(past_len, past_len + seq_len)` path,
+        # which is the one that actually continues from the cached prefill positions.
+        return self.qwen.model(inputs_embeds=embeds, past_key_values=past, use_cache=use_cache)
 
     def build_task_queries(self, task: str, visual: FeatureMap, batch: dict[str, Any]) -> TaskQueries:
         if task not in self.tasks:
@@ -142,41 +193,32 @@ class QwenVLAdapter(TaskTokenMLLM):
         return TaskQueries(tokens + e_task, grid=self.perc_grid, native=tokens)
 
     def llm_forward(self, task: str, visual: FeatureMap, queries: TaskQueries,
-                    batch: dict[str, Any]) -> MLLMOutput:
+                    batch: dict[str, Any], extra_visual: torch.Tensor | None = None) -> MLLMOutput:
         if task == "vqa":
-            return self._vqa_forward(queries, batch)
+            return self._vqa_forward(visual, queries, batch, extra_visual)
 
         b = visual.tokens.shape[0]
         device = visual.tokens.device
+        if extra_visual is None:
+            input_ids = getattr(self, f"{task}_prompt_ids").to(device).expand(b, -1)
+            mm_types = getattr(self, f"{task}_mm_token_type_ids").to(device).expand(b, -1)
+            past = self._prefill(input_ids, mm_types, visual).past_key_values
+        else:
+            # image | extra expert tokens | instruction, each continuing the previous KV cache.
+            input_ids = self.image_prefix_ids.to(device).expand(b, -1)
+            mm_types = self.image_mm_token_type_ids.to(device).expand(b, -1)
+            prefill = self._prefill(input_ids, mm_types, visual)
+            dtype = prefill.last_hidden_state.dtype
+            past = self._continue(extra_visual.to(dtype), prefill.past_key_values).past_key_values
+            text_ids = getattr(self, f"{task}_text_ids").to(device).expand(b, -1)
+            past = self._continue(self.qwen.get_input_embeddings()(text_ids), past).past_key_values
 
-        input_ids = getattr(self, f"{task}_prompt_ids").to(device).expand(b, -1)
-        mm_types = getattr(self, f"{task}_mm_token_type_ids").to(device).expand(b, -1)
-        attn1 = torch.ones_like(input_ids)
-        # The prefill only depends on frozen weights (image + fixed prompt), never on the
-        # trainable task tokens, so it needs no autograd graph -- only its KV cache.
-        with torch.no_grad():
-            prefill = self.qwen.model(
-                input_ids=input_ids,
-                pixel_values=self._cache["pixel_values"],
-                image_grid_thw=self._cache["image_grid_thw"],
-                mm_token_type_ids=mm_types,
-                attention_mask=attn1,
-                use_cache=True,
-            )
-
-        q = queries.tokens.to(prefill.last_hidden_state.dtype)
-        # No attention_mask here: with an explicit mask, `compute_3d_position_ids` builds
-        # position ids over its *whole* length (mismatching the new, cache-continuation-only
-        # `inputs_embeds`). Omitting it takes the `arange(past_len, past_len + seq_len)` path,
-        # which is the one that actually continues from the cached prefill positions.
-        step = self.qwen.model(
-            inputs_embeds=q,
-            past_key_values=prefill.past_key_values,
-            use_cache=False,
-        )
+        q = queries.tokens.to(self.qwen.dtype)
+        step = self._continue(q, past, use_cache=False)
         return MLLMOutput(task_hidden=TaskQueries(step.last_hidden_state, grid=queries.grid))
 
-    def _vqa_forward(self, queries: TaskQueries, batch: dict[str, Any]) -> MLLMOutput:
+    def _vqa_forward(self, visual: FeatureMap, queries: TaskQueries, batch: dict[str, Any],
+                     extra_visual: torch.Tensor | None = None) -> MLLMOutput:
         """[PERC] tokens (queries) as extra context after the image, then the question and
         answer as real text, teacher-forced. Batch size 1: variable-length text per example,
         no padding/masking logic yet (a training-loop simplification, not an architecture
@@ -190,18 +232,13 @@ class QwenVLAdapter(TaskTokenMLLM):
 
         input_ids = self.image_prefix_ids.to(device)
         mm_types = self.image_mm_token_type_ids.to(device)
-        with torch.no_grad():
-            prefill = self.qwen.model(
-                input_ids=input_ids,
-                pixel_values=self._cache["pixel_values"],
-                image_grid_thw=self._cache["image_grid_thw"],
-                mm_token_type_ids=mm_types,
-                attention_mask=torch.ones_like(input_ids),
-                use_cache=True,
-            )
+        prefill = self._prefill(input_ids, mm_types, visual)
+        past = prefill.past_key_values
+        if extra_visual is not None:
+            past = self._continue(extra_visual.to(self.qwen.dtype), past).past_key_values
 
-        q = queries.tokens.to(prefill.last_hidden_state.dtype)
-        perc_step = self.qwen.model(inputs_embeds=q, past_key_values=prefill.past_key_values, use_cache=True)
+        q = queries.tokens.to(self.qwen.dtype)
+        perc_step = self._continue(q, past)
 
         question, answer = batch["question"][0], batch["answer"][0]
         q_ids = tok(f"Question: {question}\nAnswer:", return_tensors="pt",
@@ -210,8 +247,7 @@ class QwenVLAdapter(TaskTokenMLLM):
         eos = torch.tensor([[tok.eos_token_id]], device=device)
         text_ids = torch.cat([q_ids, a_ids, eos], dim=1)
         text_embeds = self.qwen.get_input_embeddings()(text_ids)
-        text_step = self.qwen.model(inputs_embeds=text_embeds, past_key_values=perc_step.past_key_values,
-                                    use_cache=False)
+        text_step = self._continue(text_embeds, perc_step.past_key_values, use_cache=False)
         logits = self.qwen.lm_head(text_step.last_hidden_state)
 
         n_q = q_ids.shape[1]

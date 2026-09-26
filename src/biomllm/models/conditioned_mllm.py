@@ -1,4 +1,5 @@
-"""ConditionedMLLM: an MLLM whose task tokens are corrected by an external encoder.
+"""ConditionedMLLM: an MLLM whose task tokens (or, with `injection=native`, its visual tokens)
+are corrected by an external encoder.
 
 Conditioning sources (the comparison conditions of the paper):
     none    C0  standard task tokens (same trainable task parameters, no expert)
@@ -86,15 +87,18 @@ class ConditionedMLLM(nn.Module):
                 batch: dict[str, Any] | None = None) -> dict[str, torch.Tensor]:
         batch = batch or {}
         visual = self.mllm.visual_features(images)
-        feats = None
+        feats = extra_visual = None
         if self.conditioner is not None:
             feats = self.conditioning_features(images, visual, batch)
+        if feats is not None and self.conditioner.injection_point is InjectionPoint.NATIVE:
+            # V' replaces V everywhere downstream: the LLM's image context and the task tokens.
+            visual, extra_visual = self.conditioner.condition_visual(visual, feats)
 
         queries = self.mllm.build_task_queries(task, visual, batch)
         if feats is not None and self.conditioner.injection_point is InjectionPoint.PRE_LLM:
             queries = self.conditioner(queries, feats)
 
-        out = self.mllm.llm_forward(task, visual, queries, batch)
+        out = self.mllm.llm_forward(task, visual, queries, batch, extra_visual=extra_visual)
         hidden = out.task_hidden
         if hidden.tokens.shape[1] != queries.tokens.shape[1]:
             raise RuntimeError("llm_forward must return one hidden state per task token")

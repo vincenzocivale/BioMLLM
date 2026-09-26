@@ -1,13 +1,21 @@
 """TaskTokenConditioner: T_i <- T_i + alpha * P_theta(F_i^S).
 
-The conditioner never touches F^MLLM or the MLLM visual tokens; it only adds a correction
-to the task tokens, either before the LLM (the task queries e_task + F^MLLM) or after it
-(the task-token hidden states that feed the mask / box / detection heads).
+With `pre_llm` / `post_llm` the conditioner never touches F^MLLM or the MLLM visual tokens; it
+only adds a correction to the task tokens, either before the LLM (the task queries
+e_task + F^MLLM) or after it (the task-token hidden states that feed the mask / box / detection
+heads).
 
-`mode="prepend"` is the VPT-style alternative: instead of being summed into each T_i, the
-projected expert features are placed as extra tokens in front of the task tokens (pre-LLM
-only). Unlike `add` with a zero-initialised gate, it does not start exactly as the baseline,
-because the prepended tokens take part in attention even when they are zero.
+`native` corrects the MLLM's own visual tokens instead, V_i <- V_i + alpha * P(F_i^S), before
+they enter the LLM: the whole image context the (frozen) LLM reads carries the expert signal,
+and the task tokens built from V inherit it. The native encoder's weights are still untouched,
+and with a zero-initialised gate the model starts exactly as the baseline.
+
+`mode="prepend"` is the VPT-style alternative: instead of being summed into each T_i (or V_i),
+the projected expert features are placed as extra tokens in front of the task tokens (pre-LLM),
+or next to the native visual tokens (native; the interleaved mixture of features of "Eyes Wide
+Shut", which avoids the instruction-following loss of additive mixing). Unlike `add` with a
+zero-initialised gate, it does not start exactly as the baseline, because the prepended tokens
+take part in attention even when they are zero.
 """
 
 from __future__ import annotations
@@ -26,6 +34,7 @@ from biomllm.models.types import FeatureMap, TaskQueries
 class InjectionPoint(str, Enum):
     PRE_LLM = "pre_llm"
     POST_LLM = "post_llm"
+    NATIVE = "native"
 
 
 class InjectionMode(str, Enum):
@@ -49,7 +58,7 @@ class TaskTokenConditioner(nn.Module):
         # model cannot ignore the expert (ClinFusion's stochastic residual). Pre-LLM only.
         self.native_drop = native_drop
         if self.mode is InjectionMode.PREPEND:
-            if self.injection_point is not InjectionPoint.PRE_LLM:
+            if self.injection_point is InjectionPoint.POST_LLM:
                 raise ValueError("prepend injection is only defined before the LLM")
             if not isinstance(projector, PointwiseProjector):
                 raise ValueError("prepend injection needs a pointwise projector (linear / mlp)")
@@ -74,11 +83,27 @@ class TaskTokenConditioner(nn.Module):
         tokens = queries.tokens + self.correction(queries, feats).to(queries.tokens.dtype)
         return TaskQueries(tokens, queries.grid, queries.native, queries.num_prefix)
 
+    def condition_visual(self, visual: FeatureMap,
+                         feats: FeatureMap) -> tuple[FeatureMap, torch.Tensor | None]:
+        """`native` injection: returns the corrected visual tokens V' and, in prepend mode,
+        the extra expert tokens [B, n, D] the adapter places next to V (V itself unchanged)."""
+        if self.alpha_scale == 0.0:
+            return visual, None
+        if self.mode is InjectionMode.PREPEND:
+            return visual, self._extra_tokens(visual.tokens, visual.grid, feats)
+        as_queries = TaskQueries(visual.tokens, grid=visual.grid)
+        tokens = visual.tokens + self.correction(as_queries, feats).to(visual.tokens.dtype)
+        return FeatureMap(tokens, visual.grid), None
+
+    def _extra_tokens(self, tokens: torch.Tensor, grid: tuple[int, int] | None,
+                      feats: FeatureMap) -> torch.Tensor:
+        grid = self.prepend_grid or grid or feats.grid
+        b, _, d = tokens.shape
+        slots = TaskQueries(tokens.new_zeros(b, grid[0] * grid[1], d), grid=grid)
+        return self.correction(slots, feats).to(tokens.dtype)
+
     def _prepend(self, queries: TaskQueries, feats: FeatureMap) -> TaskQueries:
-        grid = self.prepend_grid or queries.grid or feats.grid
-        b, _, d = queries.tokens.shape
-        slots = TaskQueries(queries.tokens.new_zeros(b, grid[0] * grid[1], d), grid=grid)
-        extra = self.correction(slots, feats).to(queries.tokens.dtype)
+        extra = self._extra_tokens(queries.tokens, queries.grid, feats)
         tokens = torch.cat([extra, queries.tokens], dim=1)
         native = None
         if queries.native is not None:

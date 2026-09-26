@@ -1,0 +1,6 @@
+# Interleaved alternative to `native` ("Eyes Wide Shut" I-MoF): projected expert features as
+# extra image tokens right after the native ones, V untouched. Needs a pointwise projector
+# (linear / mlp). Does not start exactly as the baseline.
+point: native
+mode: prepend
+prepend_grid: [8, 8]

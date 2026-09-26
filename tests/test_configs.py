@@ -22,7 +22,7 @@ def test_every_condition_composes(condition):
 
 
 @pytest.mark.parametrize("conditioner", ["none", "self", "noise", "specialist"])
-@pytest.mark.parametrize("injection", ["pre_llm", "post_llm"])
+@pytest.mark.parametrize("injection", ["pre_llm", "post_llm", "native"])
 @pytest.mark.parametrize("projector", ["linear", "mlp", "cross_attn"])
 def test_debug_model_builds_and_runs(conditioner, injection, projector):
     cfg = _compose(["+experiment=debug", f"conditioner={conditioner}",

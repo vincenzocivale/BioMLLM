@@ -56,9 +56,10 @@ class ToyMLLM(TaskTokenMLLM):
         return TaskQueries(e_task.expand(b, 1, -1), grid=None)
 
     def llm_forward(self, task: str, visual: FeatureMap, queries: TaskQueries,
-                    batch: dict[str, Any]) -> MLLMOutput:
-        n_vis = visual.tokens.shape[1]
-        h = self.llm(torch.cat([visual.tokens, queries.tokens], dim=1))
+                    batch: dict[str, Any], extra_visual: torch.Tensor | None = None) -> MLLMOutput:
+        context = visual.tokens if extra_visual is None else torch.cat([visual.tokens, extra_visual], dim=1)
+        n_vis = context.shape[1]
+        h = self.llm(torch.cat([context, queries.tokens], dim=1))
         return MLLMOutput(task_hidden=TaskQueries(h[:, n_vis:], grid=queries.grid))
 
     def decode(self, task: str, task_hidden: TaskQueries, visual: FeatureMap,

@@ -28,7 +28,8 @@ def build_expert_from_cfg(expert_cfg: DictConfig):
 
 def build_conditioner(cfg: DictConfig, mllm, in_dim: int) -> TaskTokenConditioner:
     injection = InjectionPoint(cfg.injection.point)
-    out_dim = mllm.query_dim if injection is InjectionPoint.PRE_LLM else mllm.hidden_dim
+    out_dim = {InjectionPoint.PRE_LLM: mllm.query_dim, InjectionPoint.POST_LLM: mllm.hidden_dim,
+               InjectionPoint.NATIVE: mllm.visual_dim}[injection]
     gate = build_gate(cfg.gate.name, out_dim, **_kwargs(cfg.gate, drop=("name",)))
     # A zero-initialised gate already makes the model start as the baseline; zero-initialising
     # the projector as well would leave both with zero gradient. With a fixed alpha, the

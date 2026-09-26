@@ -1,9 +1,9 @@
 """Backbone-agnostic interface for MLLMs with dedicated task tokens.
 
 An adapter wraps one concrete MLLM (LISA, GLaMM, VisionLLM-v2-like, ...) and exposes four
-hooks. The conditioner plugs into the output of `build_task_queries` (pre-LLM injection)
-or into the task-token hidden states before `decode` (post-LLM injection), so it never
-needs to know which backbone is underneath.
+hooks. The conditioner plugs into the output of `visual_features` (native injection), of
+`build_task_queries` (pre-LLM injection) or into the task-token hidden states before `decode`
+(post-LLM injection), so it never needs to know which backbone is underneath.
 """
 
 from __future__ import annotations
@@ -35,8 +35,13 @@ class TaskTokenMLLM(nn.Module):
         raise NotImplementedError
 
     def llm_forward(self, task: str, visual: FeatureMap, queries: TaskQueries,
-                    batch: dict[str, Any]) -> MLLMOutput:
-        """Run the language model; return the hidden states of the task tokens."""
+                    batch: dict[str, Any], extra_visual: torch.Tensor | None = None) -> MLLMOutput:
+        """Run the language model; return the hidden states of the task tokens.
+
+        `visual` is the image context the LLM must read: with native injection it differs from
+        what the native encoder produced, so adapters must feed these tokens to the LLM rather
+        than re-encoding the image. `extra_visual` [B, n, D] (native prepend) are extra image
+        tokens placed right after the native ones."""
         raise NotImplementedError
 
     def decode(self, task: str, task_hidden: TaskQueries, visual: FeatureMap,

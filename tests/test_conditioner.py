@@ -14,7 +14,7 @@ from biomllm.models.types import FeatureMap, TaskQueries
 DIM = 64
 PROJECTORS = ("linear", "mlp", "cross_attn", "local_cross_attn")
 NON_SPATIAL_PROJECTORS = ("linear", "mlp", "cross_attn")
-INJECTIONS = ("pre_llm", "post_llm")
+INJECTIONS = ("pre_llm", "post_llm", "native")
 GATES = ("scalar", "token", "fixed")
 
 
