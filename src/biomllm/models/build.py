@@ -72,6 +72,19 @@ def build_model(cfg: DictConfig) -> ConditionedMLLM:
     return model
 
 
+def load_trainable(model: ConditionedMLLM, path: str) -> int:
+    """Load a run's trainable.pt (conditioner + task parameters, as saved by the training
+    scripts) into a freshly built model; returns the number of tensors loaded."""
+    import torch
+
+    state = torch.load(path, map_location="cpu", weights_only=True)
+    unknown = set(state) - set(model.state_dict())
+    if unknown:
+        raise KeyError(f"checkpoint keys not in the model: {sorted(unknown)[:5]}")
+    model.load_state_dict(state, strict=False)
+    return len(state)
+
+
 def _visual_dim(mllm) -> int:
     dim = getattr(mllm, "visual_dim", None)
     if dim is None:

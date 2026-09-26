@@ -120,6 +120,12 @@ def main(cfg: DictConfig) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "results.json").write_text(json.dumps(
         {"run_name": run_name, "val": result, "curve": curve}, indent=2))
+    # Conditioner + task parameters only (the MLLM and the expert are frozen): enough to
+    # rebuild the trained model, e.g. for scripts/probe_llm_hidden.py.
+    task_keys = {k for k, v in model.state_dict(keep_vars=True).items()
+                 if id(v) in {id(p) for p in model.mllm.task_parameters().values()}}
+    torch.save({k: v.detach().cpu() for k, v in model.state_dict().items()
+                if k.startswith("conditioner.") or k in task_keys}, out_dir / "trainable.pt")
 
 
 if __name__ == "__main__":

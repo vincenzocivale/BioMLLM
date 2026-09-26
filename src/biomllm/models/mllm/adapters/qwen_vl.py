@@ -75,6 +75,7 @@ class QwenVLAdapter(TaskTokenMLLM):
         self.image_token_id = getattr(tok, "image_token_id", None) or tok.convert_tokens_to_ids(image_token)
         n_img_tok = side * side
         image_block = f"<|vision_start|>{image_token * n_img_tok}<|vision_end|>"
+        self.image_block = image_block
         self.image_grid_thw_value = torch.tensor([[1, side * self.merge, side * self.merge]])
         self.register_buffer("image_grid_thw", self.image_grid_thw_value, persistent=False)
 
@@ -155,7 +156,7 @@ class QwenVLAdapter(TaskTokenMLLM):
         finally:
             del model.get_image_features  # back to the class method
 
-    def _prefill(self, input_ids: torch.Tensor, mm_types: torch.Tensor, visual: FeatureMap):
+    def _prefill(self, input_ids: torch.Tensor, mm_types: torch.Tensor, visual: FeatureMap, **kwargs):
         # Without native injection the prefill only depends on frozen weights, never on the
         # trainable parameters, so it needs no autograd graph -- only its KV cache.
         with self._image_embeds(visual), torch.set_grad_enabled(
@@ -167,7 +168,45 @@ class QwenVLAdapter(TaskTokenMLLM):
                 mm_token_type_ids=mm_types,
                 attention_mask=torch.ones_like(input_ids),
                 use_cache=True,
+                **kwargs,
             )
+
+    @torch.no_grad()
+    def image_hidden_states(self, visual: FeatureMap, layers: list[int]) -> dict[int, FeatureMap]:
+        """LLM hidden states at the image-token positions of the seg prefill, per layer
+        (0 = the input embeddings, i.e. V or V'). For probing how much of what the visual
+        tokens encode the frozen LLM keeps. Call `visual_features` on the same images first."""
+        b = visual.tokens.shape[0]
+        device = visual.tokens.device
+        input_ids = self.seg_prompt_ids.to(device).expand(b, -1)
+        mm_types = self.seg_mm_token_type_ids.to(device).expand(b, -1)
+        out = self._prefill(input_ids, mm_types, visual, output_hidden_states=True)
+        pos = (self.seg_prompt_ids[0] == self.image_token_id).to(device)
+        return {layer: FeatureMap(out.hidden_states[layer][:, pos], self.grid) for layer in layers}
+
+    @torch.no_grad()
+    def chat_next_token_logits(self, visual: FeatureMap, question: str,
+                               extra_visual: torch.Tensor | None = None) -> torch.Tensor:
+        """The base model's own chat path, no task tokens: next-token logits [V] after a user
+        turn (image + `question`) and the assistant header, batch 1. With native injection
+        this is how the package can change the general abilities of the model (H2); the other
+        injection points never reach it. Call `visual_features` on the same image first."""
+        if visual.tokens.shape[0] != 1:
+            raise NotImplementedError("chat_next_token_logits supports batch_size=1")
+        device = visual.tokens.device
+        tok = self.tokenizer
+        head = tok("<|im_start|>user\n" + self.image_block, return_tensors="pt",
+                   add_special_tokens=False)["input_ids"].to(device)
+        tail = tok(f"{question}<|im_end|>\n<|im_start|>assistant\n", return_tensors="pt",
+                   add_special_tokens=False)["input_ids"].to(device)
+        if extra_visual is None:
+            ids = torch.cat([head, tail], dim=1)
+            last = self._prefill(ids, (ids == self.image_token_id).long(), visual).last_hidden_state
+        else:
+            past = self._prefill(head, (head == self.image_token_id).long(), visual).past_key_values
+            past = self._continue(extra_visual.to(self.qwen.dtype), past).past_key_values
+            last = self._continue(self.qwen.get_input_embeddings()(tail), past).last_hidden_state
+        return self.qwen.lm_head(last[:, -1]).float()[0]
 
     def _continue(self, embeds: torch.Tensor, past, use_cache: bool = True):
         # No attention_mask here: with an explicit mask, `compute_3d_position_ids` builds
