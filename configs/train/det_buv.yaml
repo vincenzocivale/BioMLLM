@@ -1,0 +1,11 @@
+# BUV detection (scripts/train_det_c0_vs_c3.py): frozen MLLM, only [DET] queries, heads and
+# conditioner train. 20658 train frames, batch 8 -> ~2580 steps/epoch.
+policy: frozen
+batch_size: 8
+lr: 1.0e-4
+weight_decay: 1.0e-4
+grad_clip: 0.1
+max_steps: 20000
+warmup_steps: 500
+precision: bf16
+hflip: true

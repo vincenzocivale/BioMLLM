@@ -1,4 +1,5 @@
-"""Qwen3-VL adapter: one [MASK] task token per patch, STAMP-style dense segmentation.
+"""Qwen3-VL adapter: one [MASK] task token per patch, STAMP-style dense segmentation, and a
+set of learned [DET] query tokens for DETR-style detection.
 
 The native LLM is frozen and run in two passes that reuse Qwen3-VL's own tested code
 paths (`Qwen3VLModel.forward`), rather than hand-rolling M-RoPE:
@@ -13,10 +14,17 @@ paths (`Qwen3VLModel.forward`), rather than hand-rolling M-RoPE:
 
 The prompt text and its token-type layout only depend on `image_size` (fixed per model),
 so they are tokenized once in `__init__` and reused for every batch.
+
+det: T_j = e_det + q_j for Q learned queries (grid=None, no F^MLLM term: the queries read the
+image through the LLM's attention to the prefill). Their hidden states go through a class
+head (sigmoid, one logit per class) and a box MLP (normalised cxcywh), trained with the
+Hungarian set loss in biomllm/training/detection.py. Conditioning them needs a projector
+that works without a patch grid (projector=cross_attn).
 """
 
 from __future__ import annotations
 
+import math
 from typing import Any
 
 import torch
@@ -30,11 +38,13 @@ IMAGENET_MEAN = (0.485, 0.456, 0.406)
 
 
 class QwenVLAdapter(TaskTokenMLLM):
-    tasks = ("seg", "vqa")
+    tasks = ("seg", "vqa", "det")
 
     def __init__(self, model_id: str = "Qwen/Qwen3-VL-4B-Instruct", image_size: int = 512,
                 dtype: str = "bfloat16", prompt: str = "Segment the relevant structures.",
-                perc_grid: tuple[int, int] = (4, 4)):
+                perc_grid: tuple[int, int] = (4, 4),
+                det_prompt: str = "Detect the lesions in this image.",
+                num_queries: int = 16, num_classes: int = 1, box_head_dim: int = 256):
         super().__init__()
         from transformers import AutoProcessor, Qwen3VLForConditionalGeneration
 
@@ -64,10 +74,12 @@ class QwenVLAdapter(TaskTokenMLLM):
         self.image_grid_thw_value = torch.tensor([[1, side * self.merge, side * self.merge]])
         self.register_buffer("image_grid_thw", self.image_grid_thw_value, persistent=False)
 
-        # seg: task tokens follow a fixed instruction baked into the same prefill as the image.
-        prompt_ids = tok(image_block + prompt, return_tensors="pt")["input_ids"]
-        self.register_buffer("prompt_ids", prompt_ids, persistent=False)
-        self.register_buffer("mm_token_type_ids", (prompt_ids == self.image_token_id).long(), persistent=False)
+        # seg / det: task tokens follow a fixed instruction baked into the same prefill as the image.
+        for name, text in (("seg", prompt), ("det", det_prompt)):
+            ids = tok(image_block + text, return_tensors="pt")["input_ids"]
+            self.register_buffer(f"{name}_prompt_ids", ids, persistent=False)
+            self.register_buffer(f"{name}_mm_token_type_ids", (ids == self.image_token_id).long(),
+                                 persistent=False)
 
         # vqa: prefill is image-only (no baked-in instruction); the question is per-example
         # text appended after the [PERC] task tokens (see `_vqa_forward`).
@@ -80,6 +92,15 @@ class QwenVLAdapter(TaskTokenMLLM):
         self.task_embed = nn.ParameterDict({t: nn.Parameter(torch.randn(self.hidden_dim) * 0.02)
                                             for t in self.tasks})
         self.mask_head = nn.Linear(self.hidden_dim, 1)
+
+        self.num_classes = num_classes
+        self.det_queries = nn.Parameter(torch.randn(num_queries, self.hidden_dim) * 0.02)
+        self.class_head = nn.Linear(self.hidden_dim, num_classes)
+        nn.init.constant_(self.class_head.bias, -math.log((1 - 0.01) / 0.01))  # focal-loss prior
+        self.box_head = nn.Sequential(
+            nn.Linear(self.hidden_dim, box_head_dim), nn.ReLU(),
+            nn.Linear(box_head_dim, box_head_dim), nn.ReLU(),
+            nn.Linear(box_head_dim, 4))
         self._cache: dict[str, torch.Tensor] = {}
 
     def _preprocess(self, images: torch.Tensor) -> torch.Tensor:
@@ -110,6 +131,10 @@ class QwenVLAdapter(TaskTokenMLLM):
         e_task = self.task_embed[task]
         if task == "seg":
             return TaskQueries(visual.tokens + e_task, grid=visual.grid, native=visual.tokens)
+        if task == "det":
+            b = visual.tokens.shape[0]
+            tokens = (self.det_queries + e_task).to(visual.tokens.dtype)
+            return TaskQueries(tokens.expand(b, -1, -1), grid=None)
         # vqa: [PERC] tokens on a coarser grid than the native visual tokens (README), average
         # -pooled from F^MLLM so they summarise context rather than repeat every patch.
         pooled = F.adaptive_avg_pool2d(visual.as_image(), self.perc_grid)
@@ -124,8 +149,8 @@ class QwenVLAdapter(TaskTokenMLLM):
         b = visual.tokens.shape[0]
         device = visual.tokens.device
 
-        input_ids = self.prompt_ids.to(device).expand(b, -1)
-        mm_types = self.mm_token_type_ids.to(device).expand(b, -1)
+        input_ids = getattr(self, f"{task}_prompt_ids").to(device).expand(b, -1)
+        mm_types = getattr(self, f"{task}_mm_token_type_ids").to(device).expand(b, -1)
         attn1 = torch.ones_like(input_ids)
         # The prefill only depends on frozen weights (image + fixed prompt), never on the
         # trainable task tokens, so it needs no autograd graph -- only its KV cache.
@@ -202,6 +227,9 @@ class QwenVLAdapter(TaskTokenMLLM):
             h, w = task_hidden.grid
             logits = self.mask_head(task_hidden.tokens.float()).squeeze(-1).view(b, 1, h, w)
             return {"mask_logits": logits}
+        if task == "det":
+            h = task_hidden.tokens.float()
+            return {"logits": self.class_head(h), "boxes": self.box_head(h).sigmoid()}
         if task == "vqa":
             return {}  # the loss is already in MLLMOutput.lm_loss (ConditionedMLLM copies it into preds)
         raise KeyError(task)
@@ -212,5 +240,8 @@ class QwenVLAdapter(TaskTokenMLLM):
 
     def task_parameters(self) -> dict[str, nn.Parameter]:
         params = {f"task_embed.{k}": v for k, v in self.task_embed.items()}
-        params.update({f"mask_head.{k}": v for k, v in self.mask_head.named_parameters()})
+        params["det_queries"] = self.det_queries
+        for prefix, module in (("mask_head", self.mask_head), ("class_head", self.class_head),
+                               ("box_head", self.box_head)):
+            params.update({f"{prefix}.{k}": v for k, v in module.named_parameters()})
         return params

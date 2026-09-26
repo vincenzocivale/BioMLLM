@@ -1,0 +1,9 @@
+# Frozen Qwen3-VL-8B. Same adapter as qwen_vl.yaml; det adds Q learned [DET] query tokens.
+name: qwen_vl
+model_id: Qwen/Qwen3-VL-8B-Instruct
+image_size: 512
+dtype: bfloat16
+prompt: "Segment the relevant structures."
+det_prompt: "Detect the breast lesions in this ultrasound image."
+num_queries: 16
+num_classes: 2

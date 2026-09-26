@@ -6,3 +6,5 @@ patch_size: 8
 depth: 2
 num_heads: 4
 spatial_queries: true
+num_queries: 4     # [DET] query tokens (task=det)
+num_classes: 1

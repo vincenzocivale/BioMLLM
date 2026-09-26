@@ -2,7 +2,8 @@
 
 Mirrors the structure the real adapters must follow: a vision encoder producing F^MLLM,
 spatial task queries e_task + F_i^MLLM, a small transformer standing in for the LLM, and
-seg / box heads reading the task-token hidden states.
+seg / box heads reading the task-token hidden states, and a set of [DET] queries (grid=None)
+with class / box heads.
 """
 
 from __future__ import annotations
@@ -17,10 +18,11 @@ from biomllm.models.types import FeatureMap, MLLMOutput, TaskQueries
 
 
 class ToyMLLM(TaskTokenMLLM):
-    tasks = ("seg", "box")
+    tasks = ("seg", "box", "det")
 
     def __init__(self, dim: int = 64, image_size: int = 64, patch_size: int = 8,
-                 depth: int = 2, num_heads: int = 4, spatial_queries: bool = True):
+                 depth: int = 2, num_heads: int = 4, spatial_queries: bool = True,
+                 num_queries: int = 4, num_classes: int = 1):
         super().__init__()
         self.query_dim = self.hidden_dim = self.visual_dim = dim
         self.image_size = image_size
@@ -33,6 +35,8 @@ class ToyMLLM(TaskTokenMLLM):
         self.llm = nn.TransformerEncoder(layer, depth, enable_nested_tensor=False)
         self.mask_embed = nn.Linear(dim, dim)
         self.box_head = nn.Sequential(nn.Linear(dim, dim), nn.GELU(), nn.Linear(dim, 4))
+        self.det_queries = nn.Parameter(torch.randn(num_queries, dim) * 0.02)
+        self.class_head = nn.Linear(dim, num_classes)
 
     def visual_features(self, images: torch.Tensor) -> FeatureMap:
         if images.shape[-1] != self.image_size:
@@ -42,6 +46,9 @@ class ToyMLLM(TaskTokenMLLM):
 
     def build_task_queries(self, task: str, visual: FeatureMap, batch: dict[str, Any]) -> TaskQueries:
         e_task = self.task_embed[task]
+        if task == "det":
+            b = visual.tokens.shape[0]
+            return TaskQueries((self.det_queries + e_task).expand(b, -1, -1), grid=None)
         if self.spatial_queries:
             return TaskQueries(visual.tokens + e_task, grid=visual.grid, native=visual.tokens)
         # a single [SEG]/[BOX]-like token
@@ -56,6 +63,9 @@ class ToyMLLM(TaskTokenMLLM):
 
     def decode(self, task: str, task_hidden: TaskQueries, visual: FeatureMap,
                batch: dict[str, Any]) -> dict[str, torch.Tensor]:
+        if task == "det":
+            h = task_hidden.tokens
+            return {"logits": self.class_head(h), "boxes": self.box_head(h).sigmoid()}
         pooled = task_hidden.tokens.mean(dim=1)
         if task == "seg":
             logits = torch.einsum("bd,bnd->bn", self.mask_embed(pooled), visual.tokens)
@@ -70,6 +80,8 @@ class ToyMLLM(TaskTokenMLLM):
 
     def task_parameters(self) -> dict[str, nn.Parameter]:
         params = {f"task_embed.{k}": v for k, v in self.task_embed.items()}
-        for prefix, module in (("mask_embed", self.mask_embed), ("box_head", self.box_head)):
+        params["det_queries"] = self.det_queries
+        for prefix, module in (("mask_embed", self.mask_embed), ("box_head", self.box_head),
+                               ("class_head", self.class_head)):
             params.update({f"{prefix}.{k}": v for k, v in module.named_parameters()})
         return params

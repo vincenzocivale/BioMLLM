@@ -1,0 +1,8 @@
+# Control: SonoBase architecture, random weights (no ultrasound pretraining)
+kind: sonobase
+repo_src: ${oc.env:SONOBASE_REPO,/raid/DATASETS/BioMLLMData/models/sonobase_repo/src}
+model_id: AlfredQin/sonobase
+pretrained: false
+level: -1
+out_grid: 32
+dtype: bfloat16

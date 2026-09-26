@@ -26,7 +26,8 @@ from pathlib import Path
 import hydra
 import torch
 import torch.nn.functional as F
-from omegaconf import DictConfig
+import wandb
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
 from biomllm.data.datasets.segmentation import MultiLabelSegmentationFolder
@@ -78,6 +79,27 @@ def main(cfg: DictConfig) -> None:
     log.info("parameters: %s", json.dumps(param_summary(model), indent=2))
     opt = torch.optim.AdamW(trainable_parameters(model), lr=cfg.train.lr)
 
+    run_name = cfg.get("run_name", "run")
+    wandb.init(project=cfg.get("wandb_project", "biomllm-seg-c0-vs-c3"), name=run_name,
+               config=OmegaConf.to_container(cfg, resolve=True))
+
+    eval_every = cfg.get("eval_every", 0)
+    curve = []
+
+    @torch.no_grad()
+    def evaluate() -> dict:
+        model.eval()
+        metrics = BinarySegMetrics()
+        for batch in val_loader:
+            images = batch["image"].to(device)
+            target = batch["mask"].to(device)
+            logits = model(images, task="seg")["mask_logits"][:, 0].float()
+            logits_256 = F.interpolate(logits[:, None], size=target.shape[-2:], mode="bilinear",
+                                       align_corners=False)[:, 0]
+            metrics.update(logits_256 > 0, target.bool())
+        model.train()
+        return metrics.compute()
+
     step = 0
     model.train()
     while step < cfg.train.max_steps:
@@ -95,28 +117,35 @@ def main(cfg: DictConfig) -> None:
             step += 1
             if step % 10 == 0:
                 log.info("step %d loss %.4f", step, loss.item())
+                wandb.log({"train/loss": loss.item()}, step=step)
+            if eval_every and step % eval_every == 0:
+                val = evaluate()
+                diag = diagnose_conditioner(model, val_loader, device)
+                point = {"step": step, "val": val, "conditioner": diag}
+                curve.append(point)
+                log.info("step %d val %s conditioner %s", step, val, diag)
+                log_payload = {f"val/{k}": v for k, v in val.items()}
+                if diag:
+                    log_payload.update({f"conditioner/{k}": v for k, v in diag.items()})
+                wandb.log(log_payload, step=step)
 
-    model.eval()
-    metrics = BinarySegMetrics()
-    with torch.no_grad():
-        for batch in val_loader:
-            images = batch["image"].to(device)
-            target = batch["mask"].to(device)
-            logits = model(images, task="seg")["mask_logits"][:, 0].float()
-            logits_256 = F.interpolate(logits[:, None], size=target.shape[-2:], mode="bilinear",
-                                       align_corners=False)[:, 0]
-            metrics.update(logits_256 > 0, target.bool())
-    result = metrics.compute()
+    result = evaluate()
     log.info("val: %s", result)
 
     diag = diagnose_conditioner(model, val_loader, device)
     if diag:
         log.info("conditioner diagnostics: %s", diag)
 
+    wandb.log({f"final/{k}": v for k, v in result.items()})
+    if diag:
+        wandb.log({f"final_conditioner/{k}": v for k, v in diag.items()})
+    wandb.finish()
+
     out_dir = Path(cfg.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "results.json").write_text(json.dumps(
-        {"run_name": cfg.get("run_name", "run"), "val": result, "conditioner": diag}, indent=2))
+        {"run_name": run_name, "val": result, "conditioner": diag, "curve": curve},
+        indent=2))
 
 
 @torch.no_grad()

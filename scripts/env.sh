@@ -9,6 +9,7 @@ export BIOMLLM_RUNS="${BIOMLLM_RUNS:-$BIOMLLM_ROOT/runs}"
 # not exist on this workstation. Set BIOMLLM_HF_HOME to use another location.
 export HF_HOME="${BIOMLLM_HF_HOME:-$BIOMLLM_ROOT/hf_cache}"
 
-if ! findmnt "$BIOMLLM_ROOT" >/dev/null 2>&1; then
+# On DUNE itself the folder is local (export BIOMLLM_ROOT=/raid/DATASETS/BioMLLMData): no mount.
+if [ ! -d "$BIOMLLM_ROOT/datasets" ] && ! findmnt "$BIOMLLM_ROOT" >/dev/null 2>&1; then
     echo "warning: $BIOMLLM_ROOT is not mounted; run scripts/mount_dune.sh" >&2
 fi

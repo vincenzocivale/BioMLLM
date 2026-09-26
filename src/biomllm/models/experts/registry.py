@@ -281,6 +281,74 @@ class QwenVLVisionExpert(FrozenExpert):
 register("qwen_vl_vision")(QwenVLVisionExpert)
 
 
+# ------------------------------------------------------------ SonoBase (ultrasound, SAM2-based)
+
+class SonoBaseExpert(FrozenExpert):
+    """Image encoder of SonoBase (arXiv:2609.19230): SAM2 with a Hiera-B (256 px) + ConvNeXt-S
+    (512 px) + ConvNeXt-T (1024 px) pyramid trunk and SAM2's FPN neck, pretrained on the 53
+    public ultrasound datasets of SonoCorpus (BUV is not among them). Weights: CC BY-NC 4.0.
+
+    The encoder is built from the checkpoint's own resolved config (`config.yaml` in the HF
+    repo) with the modelling code of the SonoBase release (`repo_src`, its `src/` folder,
+    imported as `nemo_cv`). Feature levels (1024 px input):
+        level=-1  `vision_features`, stride 16: 64 x 64 x 256 (what SAM2's decoder reads)
+        level=0/1 FPN levels at stride 4 / 8
+    `out_grid` average-pools the map (e.g. 32 -> 1024 tokens) to keep cross-attention cheap.
+    Caution: SAM2-derived, see the note on SamEncoderExpert about decoder affinity.
+    """
+
+    def __init__(self, repo_src: str, model_id: str = "AlfredQin/sonobase",
+                 filename: str = "sonobase_hiera_b_conv_s_conv_t.pt", pretrained: bool = True,
+                 level: int = -1, out_grid: int | None = None, dtype: str = "bfloat16",
+                 name: str = ""):
+        import sys
+
+        import hydra
+        from huggingface_hub import hf_hub_download
+        from omegaconf import OmegaConf
+
+        cfg = OmegaConf.load(hf_hub_download(model_id, "config.yaml"))
+        size = int(cfg.model.image_encoder.trunk.img_size2)
+        super().__init__(int(cfg.model.image_encoder.neck.d_model), size, IMAGENET_MEAN,
+                         IMAGENET_STD, name=name or model_id)
+        if repo_src not in sys.path:
+            sys.path.insert(0, repo_src)
+        enc_cfg = cfg.model.image_encoder
+        # The trunk would otherwise load SAM2 / DINOv3 init weights that the checkpoint
+        # overwrites anyway (and whose paths only exist on the authors' cluster).
+        enc_cfg.trunk.ckpt_path0 = None
+        enc_cfg.trunk.branch1.pretrained = False
+        enc_cfg.trunk.branch2.pretrained = False
+        self.encoder = hydra.utils.instantiate(enc_cfg, _recursive_=True, _convert_="all")
+        if pretrained:
+            state = torch.load(hf_hub_download(model_id, filename), map_location="cpu",
+                               weights_only=True)["model"]
+            prefix = "image_encoder."
+            state = {k[len(prefix):]: v for k, v in state.items() if k.startswith(prefix)}
+            missing, unexpected = self.encoder.load_state_dict(state, strict=False)
+            if missing or unexpected:
+                raise RuntimeError(f"SonoBase weights mismatch: missing={missing[:5]} "
+                                   f"unexpected={unexpected[:5]}")
+        self.level = level
+        self.out_grid = out_grid
+        self.autocast_dtype = getattr(torch, dtype)
+
+    def extract(self, pixel_values: torch.Tensor) -> FeatureMap:
+        import torch.nn.functional as F
+
+        with torch.autocast(pixel_values.device.type, dtype=self.autocast_dtype,
+                            enabled=self.autocast_dtype != torch.float32):
+            out = self.encoder(pixel_values)
+        x = out["vision_features"] if self.level == -1 else out["backbone_fpn"][self.level]
+        x = x.float()
+        if self.out_grid is not None and x.shape[-1] != self.out_grid:
+            x = F.adaptive_avg_pool2d(x, self.out_grid)
+        return FeatureMap.from_image(x)
+
+
+register("sonobase")(SonoBaseExpert)
+
+
 def _processor_size(proc) -> tuple[int, int]:
     size = getattr(proc, "crop_size", None) or proc.size
     if "height" in size:

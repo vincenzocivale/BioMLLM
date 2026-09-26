@@ -21,7 +21,8 @@ from pathlib import Path
 
 import hydra
 import torch
-from omegaconf import DictConfig
+import wandb
+from omegaconf import DictConfig, OmegaConf
 from torch.utils.data import DataLoader
 
 from biomllm.data.datasets.vqa import VQARadYesNo
@@ -67,6 +68,27 @@ def main(cfg: DictConfig) -> None:
     log.info("parameters: %s", json.dumps(param_summary(model), indent=2))
     opt = torch.optim.AdamW(param_groups(model, cfg.train.lr, cfg.get("conditioner_lr_scale", 1.0)))
 
+    run_name = cfg.get("run_name", "run")
+    wandb.init(project=cfg.get("wandb_project", "biomllm-vqa-c0-vs-c3"), name=run_name,
+               config=OmegaConf.to_container(cfg, resolve=True))
+
+    @torch.no_grad()
+    def evaluate() -> dict:
+        model.eval()
+        correct, majority_correct, n = 0, 0, 0
+        for i in range(len(val_ds)):
+            item = val_ds[i]
+            images = item["image"][None].to(device)
+            pred = predict(model, images, item["question"])
+            correct += int(pred == item["answer"])
+            majority_correct += int(item["answer"] == "no")  # majority class in this split
+            n += 1
+        model.train()
+        return {"accuracy": correct / n, "majority_baseline": majority_correct / n, "n": n}
+
+    eval_every = cfg.get("eval_every", 0)
+    curve = []
+
     step = 0
     model.train()
     while step < cfg.train.max_steps:
@@ -82,26 +104,22 @@ def main(cfg: DictConfig) -> None:
             step += 1
             if step % 10 == 0:
                 log.info("step %d loss %.4f", step, loss.item())
+                wandb.log({"train/loss": loss.item()}, step=step)
+            if eval_every and step % eval_every == 0:
+                val = evaluate()
+                curve.append({"step": step, "val": val})
+                log.info("step %d val %s", step, val)
+                wandb.log({f"val/{k}": v for k, v in val.items()}, step=step)
 
-    model.eval()
-    correct, majority_correct, n = 0, 0, 0
-    for i in range(len(val_ds)):
-        item = val_ds[i]
-        images = item["image"][None].to(device)
-        pred = predict(model, images, item["question"])
-        correct += int(pred == item["answer"])
-        majority_correct += int(item["answer"] == "no")  # majority class in this split
-        n += 1
-        if (i + 1) % 50 == 0:
-            log.info("eval %d/%d acc so far %.4f", i + 1, len(val_ds), correct / n)
-
-    result = {"accuracy": correct / n, "majority_baseline": majority_correct / n, "n": n}
+    result = evaluate()
     log.info("val: %s", result)
+    wandb.log({f"final/{k}": v for k, v in result.items()})
+    wandb.finish()
 
     out_dir = Path(cfg.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "results.json").write_text(json.dumps(
-        {"run_name": cfg.get("run_name", "run"), "val": result}, indent=2))
+        {"run_name": run_name, "val": result, "curve": curve}, indent=2))
 
 
 if __name__ == "__main__":

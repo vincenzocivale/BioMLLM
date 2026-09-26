@@ -1,0 +1,9 @@
+# Specialist (ultrasound): SonoBase image encoder (SAM2-based, CC BY-NC 4.0 weights).
+# repo_src: the `src/` folder of github.com/AlfredQin/sonobase (modelling code, `nemo_cv`).
+kind: sonobase
+repo_src: ${oc.env:SONOBASE_REPO,/raid/DATASETS/BioMLLMData/models/sonobase_repo/src}
+model_id: AlfredQin/sonobase
+pretrained: true
+level: -1        # vision_features, stride 16 (64x64x256 at 1024 px)
+out_grid: 32     # pooled to 32x32 = 1024 tokens for the cross-attention projector
+dtype: bfloat16

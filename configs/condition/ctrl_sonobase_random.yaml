@@ -1,0 +1,5 @@
+# @package _global_
+# Control: SonoBase architecture without pretraining
+defaults:
+  - override /conditioner: specialist
+  - override /expert: sonobase_random

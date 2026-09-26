@@ -1,0 +1,5 @@
+# @package _global_
+# C3: ultrasound specialist (method). Detection queries have no patch grid: use projector=cross_attn.
+defaults:
+  - override /conditioner: specialist
+  - override /expert: sonobase
