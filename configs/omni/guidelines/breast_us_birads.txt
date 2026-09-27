@@ -1,0 +1,8 @@
+Breast ultrasound lesion appearance (paraphrase of the ACR BI-RADS ultrasound lexicon, 5th edition).
+A breast mass is a space-occupying lesion seen in two planes, distinct from the surrounding fibroglandular tissue and subcutaneous fat.
+Shape: oval, round or irregular. Orientation: parallel (wider than tall, long axis parallel to the skin) or not parallel (taller than wide).
+Margin: circumscribed, or not circumscribed (indistinct, angular, microlobulated, spiculated).
+Echo pattern relative to fat: anechoic (cyst, black and fluid-filled), hypoechoic (darker than fat, typical of solid masses), isoechoic, hyperechoic, complex cystic and solid, or heterogeneous.
+Posterior features: enhancement (brighter below the mass, typical of cysts), shadowing (darker below, frequent in malignancy), combined or none.
+Suspicious findings include irregular shape, non-parallel orientation, non-circumscribed or spiculated margins, posterior shadowing and an echogenic halo; benign-appearing findings include oval shape, parallel orientation and circumscribed margins.
+The lesion boundary is where the mass texture ends and normal glandular tissue, fat or Cooper ligaments begin; posterior acoustic shadows and skin or pectoral muscle layers are not part of the lesion.

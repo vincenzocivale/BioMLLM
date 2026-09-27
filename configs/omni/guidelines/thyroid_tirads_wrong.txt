@@ -1,0 +1,8 @@
+Thyroid ultrasound nodule appearance (paraphrase of the ACR TI-RADS lexicon); used as a wrong-organ guideline control.
+A thyroid nodule is a discrete lesion within the thyroid gland, distinct from the surrounding parenchyma of the neck.
+Composition: cystic, spongiform, mixed cystic and solid, or solid. Echogenicity relative to thyroid tissue: anechoic, hyperechoic, isoechoic, hypoechoic or very hypoechoic compared with the strap muscles.
+Shape on transverse images: wider than tall, or taller than wide.
+Margin: smooth, ill-defined, lobulated or irregular, or with extra-thyroidal extension into adjacent structures.
+Echogenic foci: none, large comet-tail artifacts, macrocalcifications, peripheral rim calcifications or punctate echogenic foci.
+Suspicious findings include solid composition, marked hypoechogenicity, taller-than-wide shape, irregular margins and punctate echogenic foci; spongiform and purely cystic nodules are benign.
+The nodule boundary is where the nodule tissue ends and normal thyroid parenchyma, the trachea, the carotid artery or the strap muscles begin.

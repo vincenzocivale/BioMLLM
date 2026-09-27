@@ -200,6 +200,38 @@ class SamEncoderExpert(FrozenExpert):
 register("sam_encoder")(SamEncoderExpert)
 
 
+class Sam2EncoderExpert(FrozenExpert):
+    """Image encoder of a transformers Sam2Model, e.g. facebook/sam2.1-hiera-base-plus: the
+    generalist (natural-image) counterpart of SonoBase. Its last level has the same layout as
+    SonoBase's `vision_features` (stride 16, 256 channels: 64 x 64 at 1024 px), so C2 vs C3
+    isolates the ultrasound pretraining rather than the feature format."""
+
+    def __init__(self, model_id: str, out_grid: int | None = None, name: str = ""):
+        from transformers import Sam2Model, Sam2Processor
+
+        proc = Sam2Processor.from_pretrained(model_id).image_processor
+        super().__init__(0, (proc.size.height, proc.size.width), tuple(proc.image_mean),
+                         tuple(proc.image_std), name=name or model_id)
+        model = Sam2Model.from_pretrained(model_id)
+        # Only the image encoder (Hiera + FPN neck); prompt encoder / mask decoder are dropped.
+        self.vision_encoder = model.vision_encoder
+        self.dim = model.config.vision_config.fpn_hidden_size
+        self.out_grid = out_grid
+
+    def extract(self, pixel_values: torch.Tensor) -> FeatureMap:
+        import torch.nn.functional as F
+
+        # Raw last FPN level, like SonoBase's `vision_features` (Sam2Model.get_image_embeddings
+        # would also add the image-mode `no_memory_embedding`, which SonoBase's output lacks).
+        x = self.vision_encoder(pixel_values).fpn_hidden_states[-1]
+        if self.out_grid is not None and x.shape[-1] != self.out_grid:
+            x = F.adaptive_avg_pool2d(x, self.out_grid)
+        return FeatureMap.from_image(x)
+
+
+register("sam2_encoder")(Sam2EncoderExpert)
+
+
 # ------------------------------------------------------- Qwen3-VL native encoder (F^MLLM)
 
 class QwenVLVisionExpert(FrozenExpert):

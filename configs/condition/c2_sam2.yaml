@@ -1,0 +1,5 @@
+# @package _global_
+# C2: generalist SAM2 (no ultrasound pretraining) -- the domain-specificity control for SonoBase
+defaults:
+  - override /conditioner: generalist
+  - override /expert: sam2

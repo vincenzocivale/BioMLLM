@@ -81,10 +81,10 @@ def main(cfg: DictConfig) -> None:
                config=OmegaConf.to_container(cfg, resolve=True))
 
     @torch.no_grad()
-    def evaluate() -> dict:
+    def evaluate(loader=val_loader) -> dict:
         model.eval()
         ev = CocoDetectionEvaluator(classes)
-        for batch in val_loader:
+        for batch in loader:
             out = model(batch["image"].to(device), task="det")
             ev.update(postprocess(out["logits"], out["boxes"]), batch["targets"], batch["size"])
         model.train()
@@ -127,7 +127,28 @@ def main(cfg: DictConfig) -> None:
     diag = diagnose_conditioner(model, val_loader, device)
     if diag:
         log.info("conditioner diagnostics: %s", diag)
+
+    # Test-time ablations of the trained conditioned model (same weights):
+    #   shuffled  each frame is conditioned on another frame's features. The in-order val
+    #             loader batches consecutive frames of one video (near-identical features),
+    #             so this uses a seeded shuffled loader: partners come from other videos.
+    #   alpha0    correction switched off -> what the trained queries / heads do alone
+    ablations = {}
+    if model.conditioner is not None:
+        mixed_loader = DataLoader(val_ds, batch_size=cfg.train.batch_size, shuffle=True,
+                                  generator=torch.Generator().manual_seed(0),
+                                  collate_fn=detection_collate, num_workers=workers)
+        model.shuffle_features = True
+        ablations["shuffled"] = evaluate(mixed_loader)
+        model.shuffle_features = False
+        model.conditioner.set_alpha_scale(0.0)
+        ablations["alpha0"] = evaluate()
+        model.conditioner.set_alpha_scale(1.0)
+        log.info("ablations: %s", ablations)
+
     wandb.log({f"final/{k}": v for k, v in result.items()})
+    for name, r in ablations.items():
+        wandb.log({f"final_{name}/{k}": v for k, v in r.items()})
     if diag:
         wandb.log({f"final_conditioner/{k}": v for k, v in diag.items()})
     wandb.finish()
@@ -135,9 +156,11 @@ def main(cfg: DictConfig) -> None:
     out_dir = Path(cfg.output_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / "results.json").write_text(json.dumps(
-        {"run_name": run_name, "val": result, "conditioner": diag, "curve": curve}, indent=2))
+        {"run_name": run_name, "val": result, "ablations": ablations, "conditioner": diag,
+         "curve": curve}, indent=2))
     torch.save({k: v.detach().cpu() for k, v in model.state_dict().items()
-                if k.startswith("conditioner.") or k in _task_param_keys(model)},
+                if k.startswith("conditioner.") or k == "static_features"
+                or k in _task_param_keys(model)},
                out_dir / "trainable.pt")
 
 

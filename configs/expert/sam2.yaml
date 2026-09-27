@@ -1,0 +1,4 @@
+# Generalist (natural images), same family and feature layout as SonoBase: SAM2.1 Hiera-B+.
+kind: sam2_encoder
+model_id: facebook/sam2.1-hiera-base-plus
+out_grid: 32     # matches expert/sonobase.yaml
