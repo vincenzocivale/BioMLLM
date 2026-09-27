@@ -1,0 +1,31 @@
+# Canonical dataset. BUS-CoT is not available locally (only already-downloaded datasets may be
+# used), so the primary dataset is BrEaST-Lesions_USG: the only local breast US set with
+# expert BI-RADS descriptors. See EXPERIMENT_REPORT.md, "Deviations".
+dataset: breast
+source: BrEaST-Lesions_USG
+raw_dir: /raid/DATASETS/BioMLLMData/datasets/raw/us_bench/breast_lesions
+images_subdir: x/BrEaST-Lesions_USG-images_and_masks
+clinical_file: clinical.xlsx
+manifest: outputs/data/breast_manifest.parquet
+stats_dir: outputs/data
+
+# Label spaces (order = class index). An attribute whose labels are all null in the dataset
+# keeps its query but gets no head (BrEaST has no orientation descriptor).
+attributes:
+  shape: [oval, round, irregular]
+  orientation: [parallel, not_parallel]
+  margin: [circumscribed, not_circumscribed_indistinct, not_circumscribed_other]
+  echo_pattern: [anechoic, hyperechoic, complex_cystic_solid, hypoechoic, isoechoic, heterogeneous]
+  posterior_features: [none, enhancement, shadowing, combined]
+
+split:
+  n_folds: 5          # patient-grouped, malignancy-stratified; fold k = test, fold k+1 = val
+  seed: 17
+  phash_max_distance: 6   # near-duplicate images are merged into one split group
+
+image:
+  crop: lesion_box    # lesion_box | full. lesion_box uses the GT lesion mask (lesion assumed localised)
+  context: 0.25       # box padding on each side, as a fraction of the box size
+  posterior_extra: 0.5  # extra padding below the lesion (posterior acoustic features)
+  train_jitter: 0.1   # random box shift/scale at train time
+  hflip: true         # left-right only; depth direction is never flipped

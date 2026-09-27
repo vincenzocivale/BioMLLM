@@ -1,0 +1,22 @@
+seed: 17
+output_root: outputs/runs
+hidden: 256
+dropout: 0.3
+lr: 1.0e-3
+weight_decay: 1.0e-2
+epochs: 300
+patience: 40
+bootstrap: 2000
+
+runs:
+  # A. frozen backbone embedding (no steering)
+  diagnosis_base_usfmae: {source_run: clinical_steering_usfmae, features: [base]}
+  # B. concatenated clinically steered embeddings (supervised queries only by default:
+  #    the orientation query receives no supervision on BrEaST)
+  diagnosis_clinical_steering: {source_run: clinical_steering_usfmae,
+                                features: [shape, margin, echo_pattern, posterior_features]}
+  # B'. all five queries, as in the original specification
+  diagnosis_clinical_steering_all5: {source_run: clinical_steering_usfmae,
+                                     features: [shape, orientation, margin, echo_pattern, posterior_features]}
+  # oracle: one-hot ground-truth BI-RADS descriptors
+  diagnosis_oracle_attributes: {source_run: null, features: [oracle]}

@@ -1,0 +1,21 @@
+seed: 17
+folds: [0, 1, 2, 3, 4]
+epochs: 60
+batch_size: 16
+lr_steering: 2.0e-4
+lr_gates: 5.0e-3      # ~600 steps: at 1e-4 a zero-init gate could reach at most |alpha| ~ 0.06
+lr_heads: 1.0e-3
+weight_decay: 0.05
+warmup_frac: 0.05
+grad_clip: 1.0
+amp: bf16
+patience: 15
+class_weighted: true
+num_workers: 0   # images are cached in memory; keeps augmentation RNG deterministic
+output_root: outputs/runs
+
+runs:
+  baseline_attributes_usfmae: {backbone: usfmae, steering: false}
+  clinical_steering_usfmae: {backbone: usfmae, steering: true}
+  clinical_steering_dinov2: {backbone: dinov2, steering: true}
+  baseline_attributes_dinov2: {backbone: dinov2, steering: false}
